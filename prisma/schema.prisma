@@ -1,0 +1,124 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum EndpointStatus {
+  ENABLED
+  DISABLED
+}
+
+enum DeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Application {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  /// SHA-256 of the API key. The key itself is shown once, at creation.
+  apiKeyHash   String     @unique @map("api_key_hash")
+  /// First characters of the key, so a person can tell keys apart.
+  apiKeyPrefix String     @map("api_key_prefix")
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  endpoints    Endpoint[]
+  messages     Message[]
+
+  @@map("applications")
+}
+
+model Endpoint {
+  id                  String           @id @default(uuid()) @db.Uuid
+  applicationId       String           @map("application_id") @db.Uuid
+  url                 String
+  description         String?
+  eventTypes          String[]         @map("event_types")
+  status              EndpointStatus   @default(ENABLED)
+  /// GONE (receiver answered 410), FAILING (circuit breaker) or MANUAL.
+  disabledReason      String?          @map("disabled_reason")
+  consecutiveFailures Int              @default(0) @map("consecutive_failures")
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  application         Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  secrets             EndpointSecret[]
+  deliveries          Delivery[]
+
+  @@index([applicationId, createdAt])
+  @@map("endpoints")
+}
+
+/// The current secret has expiresAt = null. After a rotation the old one keeps signing until expiresAt.
+model EndpointSecret {
+  id         String    @id @default(uuid()) @db.Uuid
+  endpointId String    @map("endpoint_id") @db.Uuid
+  secret     String
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(3)
+  endpoint   Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@map("endpoint_secrets")
+}
+
+model Message {
+  id             String      @id @default(uuid()) @db.Uuid
+  applicationId  String      @map("application_id") @db.Uuid
+  eventType      String      @map("event_type")
+  payload        Json
+  idempotencyKey String?     @map("idempotency_key")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  application    Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  deliveries     Delivery[]
+
+  @@unique([applicationId, idempotencyKey])
+  @@index([applicationId, createdAt])
+  @@map("messages")
+}
+
+/// One message to one endpoint. Workers claim due rows with FOR UPDATE SKIP LOCKED.
+model Delivery {
+  id            String            @id @default(uuid()) @db.Uuid
+  messageId     String            @map("message_id") @db.Uuid
+  endpointId    String            @map("endpoint_id") @db.Uuid
+  status        DeliveryStatus    @default(PENDING)
+  attemptCount  Int               @default(0) @map("attempt_count")
+  /// When the next attempt is due. Claiming pushes it forward by the lease.
+  nextAttemptAt DateTime          @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  lastAttemptAt DateTime?         @map("last_attempt_at") @db.Timestamptz(3)
+  completedAt   DateTime?         @map("completed_at") @db.Timestamptz(3)
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  message       Message           @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  endpoint      Endpoint          @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  attempts      DeliveryAttempt[]
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, status, createdAt])
+  @@index([messageId])
+  @@map("deliveries")
+}
+
+model DeliveryAttempt {
+  id            String   @id @default(uuid()) @db.Uuid
+  deliveryId    String   @map("delivery_id") @db.Uuid
+  attemptNumber Int      @map("attempt_number")
+  statusCode    Int?     @map("status_code")
+  durationMs    Int      @map("duration_ms")
+  /// First 1 KB of the response body.
+  responseBody  String?  @map("response_body")
+  /// Network error, timeout or blocked address, when there was no HTTP response.
+  error         String?
+  succeeded     Boolean
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  delivery      Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@unique([deliveryId, attemptNumber])
+  @@map("delivery_attempts")
+}
