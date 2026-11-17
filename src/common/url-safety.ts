@@ -26,7 +26,6 @@ for (const [network, prefix] of [
 for (const [network, prefix] of [
   ['::', 128], // unspecified
   ['::1', 128], // loopback
-  ['::ffff:0:0', 96], // IPv4-mapped: could hide any IPv4 address, so all are refused
   ['64:ff9b::', 96], // NAT64: same reason
   ['fc00::', 7], // unique local (private)
   ['fe80::', 10], // link-local
@@ -35,7 +34,10 @@ for (const [network, prefix] of [
   blocked.addSubnet(network, prefix, 'ipv6');
 }
 
-/** True for any address a webhook must never be sent to. Anything that is not an IP is refused. */
+/**
+ * True for any address a webhook must never be sent to. Anything that is not an IP is refused.
+ * BlockList checks IPv4-mapped IPv6 addresses (::ffff:127.0.0.1) against the IPv4 rules.
+ */
 export function isBlockedAddress(address: string): boolean {
   const family = net.isIP(address);
   if (family === 0) return true;
