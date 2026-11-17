@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: webhooks
+    ports:
+      - '${POSTGRES_HOST_PORT:-5447}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U app -d webhooks']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # One-off job: applies migrations, then exits.
+  migrate:
+    build:
+      context: .
+      target: build
+    command: sh -c "npx prisma migrate deploy"
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/webhooks
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # Overrides for running inside the container network, as a production build.
+      NODE_ENV: production
+      DATABASE_URL: postgresql://app:app@postgres:5432/webhooks
+      SECRETS_SOURCE: local
+    ports:
+      - '${API_HOST_PORT:-3000}:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Same image, second entrypoint: claims and sends deliveries. Two replicas show that
+  # SKIP LOCKED keeps them from taking the same delivery.
+  worker:
+    build: .
+    command: ['node', 'dist/scripts/start-with-secrets.js', 'worker']
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://app:app@postgres:5432/webhooks
+      SECRETS_SOURCE: local
+    deploy:
+      replicas: 2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Local test receiver: verifies signatures, can be told to fail. Not part of the service.
+  receiver:
+    build: .
+    command: ['node', 'dist/receiver/server.js']
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+    ports:
+      - '${RECEIVER_HOST_PORT:-4000}:4000'
+
+volumes:
+  pgdata:

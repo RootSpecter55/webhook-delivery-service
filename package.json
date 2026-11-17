@@ -1,0 +1,72 @@
+{
+  "name": "webhook-delivery-service",
+  "version": "0.1.0",
+  "description": "Webhook delivery service: signed fan-out, retries with jitter, circuit breaker and SSRF protection",
+  "scripts": {
+    "test": "jest --runInBand",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/scripts/start-with-secrets.js api",
+    "start:worker": "node dist/scripts/start-with-secrets.js worker",
+    "dev": "tsx watch scripts/start-with-secrets.ts api",
+    "dev:worker": "tsx watch scripts/start-with-secrets.ts worker",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "jest --selectProjects unit",
+    "test:integration": "jest --runInBand --selectProjects integration",
+    "prisma:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "postinstall": "prisma generate",
+    "receiver": "tsx receiver/server.ts",
+    "bench:delivery": "tsx scripts/delivery-throughput.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RootSpecter55/webhook-delivery-service.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/RootSpecter55/webhook-delivery-service/issues"
+  },
+  "homepage": "https://github.com/RootSpecter55/webhook-delivery-service#readme",
+  "private": "true",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1170.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "jest": "^30.5.2",
+    "pg": "^8.23.1",
+    "pino-pretty": "^13.2.0",
+    "prettier": "^3.10.1",
+    "prisma": "^7.10.1",
+    "supertest": "^7.3.2",
+    "ts-jest": "^29.4.15",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9",
+    "typescript-eslint": "^8.73.0"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.10.1": true,
+    "esbuild@0.28.2": true,
+    "prisma@7.10.1": true,
+    "@parcel/watcher": false
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
