@@ -1,0 +1,89 @@
+# Reference deployment to Amazon ECS. Manual trigger only: it never runs on push.
+#
+# The API and the worker are two ECS services running the same image with different commands,
+# so each can be scaled on its own. Workers can run as many tasks as needed: SKIP LOCKED
+# claiming keeps them from sending the same delivery.
+#
+# Requires these repository variables (Settings > Secrets and variables > Actions > Variables):
+#   AWS_REGION, AWS_ACCOUNT_ID, AWS_DEPLOY_ROLE_ARN (role trusted for GitHub OIDC),
+#   ECR_REPOSITORY, ECS_CLUSTER, ECS_API_SERVICE, ECS_WORKER_SERVICE,
+#   EXECUTION_ROLE_ARN, TASK_ROLE_ARN, SECRET_ID
+# No long-lived AWS keys are stored: credentials come from assuming the role via OIDC.
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write # needed to request the OIDC token
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Assume deploy role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Fill in task definition placeholders
+        env:
+          EXECUTION_ROLE_ARN: ${{ vars.EXECUTION_ROLE_ARN }}
+          TASK_ROLE_ARN: ${{ vars.TASK_ROLE_ARN }}
+          SECRET_ID: ${{ vars.SECRET_ID }}
+        run: |
+          envsubst < deploy/ecs-task-definition.json > api-task-definition.json
+          envsubst < deploy/ecs-task-definition.worker.json > worker-task-definition.json
+
+      - name: Set image in API task definition
+        id: api-taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: api-task-definition.json
+          container-name: api
+          image: ${{ steps.image.outputs.image }}
+
+      - name: Set image in worker task definition
+        id: worker-taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: worker-task-definition.json
+          container-name: worker
+          image: ${{ steps.image.outputs.image }}
+
+      - name: Update API service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.api-taskdef.outputs.task-definition }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          service: ${{ vars.ECS_API_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Update worker service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.worker-taskdef.outputs.task-definition }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          service: ${{ vars.ECS_WORKER_SERVICE }}
+          wait-for-service-stability: true
